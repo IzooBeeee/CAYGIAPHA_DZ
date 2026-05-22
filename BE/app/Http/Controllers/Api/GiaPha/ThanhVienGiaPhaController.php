@@ -20,10 +20,17 @@ class ThanhVienGiaPhaController extends Controller
             return response()->json(['status' => 0, 'message' => 'Bạn cần đăng nhập hệ thống!'], 401);
         }
 
-        $query = ThanhVienGiaPha::with(['nhanhHo.phaHe', 'cha', 'me', 'honNhanChong.vo', 'honNhanVo.chong', 'moPhan']);
+        // Admin có thể xem cả bản ghi đã xóa mềm
+        if ($login->vai_tro === 'quan_tri_vien' && $request->boolean('with_trashed')) {
+            $query = ThanhVienGiaPha::withTrashed()->with(['nhanhHo.phaHe', 'cha', 'me', 'honNhanChong.vo', 'honNhanVo.chong', 'moPhan']);
+        } else {
+            $query = ThanhVienGiaPha::with(['nhanhHo.phaHe', 'cha', 'me', 'honNhanChong.vo', 'honNhanVo.chong', 'moPhan']);
+        }
 
+        // Trưởng nhánh chỉ thấy thành viên trong nhánh mình
         if ($login->vai_tro === 'truong_nhanh') {
-            $query->whereIn('id_nhanh_ho', $login->nhanhHosQuanLy()->pluck('id'));
+            $idsNhanh = $login->nhanhHosQuanLy()->pluck('id');
+            $query->whereIn('id_nhanh_ho', $idsNhanh);
         }
 
         if ($request->id_nhanh_ho) {
@@ -36,18 +43,26 @@ class ThanhVienGiaPhaController extends Controller
             });
         }
 
+        if ($request->ho_ten) {
+            $query->where('ho_ten', 'like', '%'.$request->ho_ten.'%');
+        }
+
         return response()->json(['status' => 1, 'data' => $query->orderBy('doi_thu')->orderBy('ho_ten')->get()]);
     }
 
     public function showCongKhai($id)
     {
-        $thanhVien = ThanhVienGiaPha::with(['nhanhHo', 'cha', 'me'])->find($id);
+        $thanhVien = ThanhVienGiaPha::with(['nhanhHo', 'cha', 'me', 'honNhanChong.vo', 'honNhanVo.chong'])
+            ->find($id);
 
         if (! $thanhVien) {
             return response()->json(['status' => 0, 'message' => 'Không tìm thấy thành viên!'], 404);
         }
 
-        return response()->json(['status' => 1, 'data' => $thanhVien]);
+        // Ẩn thông tin nhạy cảm với khách vãng lai
+        $data = $thanhVien->makeHidden(['so_dien_thoai', 'dia_chi_hien_tai', 'ghi_chu']);
+
+        return response()->json(['status' => 1, 'data' => $data]);
     }
 
     public function store(LuuThanhVienGiaPhaRequest $request)

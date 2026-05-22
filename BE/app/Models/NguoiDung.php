@@ -7,6 +7,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
+
 class NguoiDung extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable;
@@ -43,17 +44,12 @@ class NguoiDung extends Authenticatable
 
     public function nhanhHosQuanLy()
     {
-        return $this->belongsToMany(NhanhHo::class, 'nhanh_hos', 'id_nguoi_quan_ly', 'id_nhanh_ho');
+        return $this->hasMany(NhanhHo::class, 'id_nguoi_quan_ly');
     }
 
-    public function yeuCauDaGui()
+    public function nhatKyHoatDongs()
     {
-        return $this->hasMany(YeuCauChinhSua::class, 'id_nguoi_gui');
-    }
-
-    public function yeuCauDaDuyet()
-    {
-        return $this->hasMany(YeuCauChinhSua::class, 'id_nguoi_duyet');
+        return $this->hasMany(NhatKyHoatDong::class, 'id_nguoi_dung');
     }
 
     public function baiViets()

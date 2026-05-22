@@ -11,7 +11,7 @@ return new class extends Migration
         Schema::create('nhat_ky_hoat_dongs', function (Blueprint $table) {
             $table->id();
             $table->integer('id_nguoi_dung')->nullable();
-            $table->enum('hanh_dong', ['them', 'sua', 'xoa', 'dang_nhap', 'dang_xuat', 'sua_ca_nhan', 'khoi_phuc']);
+            $table->enum('hanh_dong', ['them', 'sua', 'xoa', 'dang_nhap', 'dang_xuat', 'sua_ca_nhan', 'khoi_phuc', 'doi_trang_thai', 'dang_ky_tham_gia']);
             $table->string('ten_bang');
             $table->integer('id_ban_ghi')->nullable();
             $table->json('du_lieu_cu')->nullable();

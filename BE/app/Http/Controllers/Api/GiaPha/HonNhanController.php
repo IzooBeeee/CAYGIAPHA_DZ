@@ -7,6 +7,7 @@ use App\Http\Requests\GiaPha\LuuHonNhanRequest;
 use App\Http\Requests\GiaPha\XoaHonNhanRequest;
 use App\Models\HonNhan;
 use App\Models\NhatKyHoatDong;
+use App\Models\ThanhVienGiaPha;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
@@ -14,11 +15,23 @@ class HonNhanController extends Controller
 {
     public function getData()
     {
-        if (! Auth::guard('sanctum')->user()) {
+        $login = Auth::guard('sanctum')->user();
+        if (! $login) {
             return response()->json(['status' => 0, 'message' => 'Bạn cần đăng nhập hệ thống!'], 401);
         }
 
-        return response()->json(['status' => 1, 'data' => HonNhan::with(['chong', 'vo'])->orderByDesc('id')->get()]);
+        $query = HonNhan::with(['chong.nhanhHo', 'vo.nhanhHo'])->orderByDesc('id');
+
+        // Trưởng nhánh chỉ xem hôn nhân liên quan đến nhánh mình
+        if ($login->vai_tro === 'truong_nhanh') {
+            $idsNhanh = $login->nhanhHosQuanLy()->pluck('id');
+            $query->where(function ($q) use ($idsNhanh) {
+                $q->whereHas('chong', fn ($s) => $s->whereIn('id_nhanh_ho', $idsNhanh))
+                    ->orWhereHas('vo', fn ($s) => $s->whereIn('id_nhanh_ho', $idsNhanh));
+            });
+        }
+
+        return response()->json(['status' => 1, 'data' => $query->get()]);
     }
 
     public function store(LuuHonNhanRequest $request)
@@ -28,35 +41,17 @@ class HonNhanController extends Controller
             return response()->json(['status' => 0, 'message' => 'Bạn không có quyền thực hiện chức năng này!'], 403);
         }
 
-        // Kiểm tra trưởng nhánh có quyền với nhánh của vợ/chồng không
+        // Trưởng nhánh: kiểm tra ít nhất một bên (chồng hoặc vợ) thuộc nhánh mình
         if ($login->vai_tro === 'truong_nhanh') {
-            $honNhanData = $request->validated();
-            $nhanhHoIds = [];
-            if (! empty($honNhanData['id_chong'])) {
-                $thanhVien = \App\Models\ThanhVienGiaPha::find($honNhanData['id_chong']);
-                if ($thanhVien && $thanhVien->id_nhanh_ho) {
-                    $nhanhHoIds[] = $thanhVien->id_nhanh_ho;
-                }
-            }
-            if (! empty($honNhanData['id_vo'])) {
-                $thanhVien = \App\Models\ThanhVienGiaPha::find($honNhanData['id_vo']);
-                if ($thanhVien && $thanhVien->id_nhanh_ho) {
-                    $nhanhHoIds[] = $thanhVien->id_nhanh_ho;
-                }
-            }
-            if (! empty($honNhanData['id_nhanh_ho'])) {
-                $nhanhHoIds[] = $honNhanData['id_nhanh_ho'];
-            }
-            $nhanhHoIds = array_unique($nhanhHoIds);
-            foreach ($nhanhHoIds as $nhanhHoId) {
-                if (! $login->nhanhHosQuanLy()->where('id', $nhanhHoId)->exists()) {
-                    return response()->json(['status' => 0, 'message' => 'Bạn không có quyền thêm hôn nhân trong nhánh này!'], 403);
-                }
+            $this->kiemTraQuyenHonNhan($login, $request->id_chong, $request->id_vo);
+            // Nếu không có quyền thì kiemTraQuyenHonNhan sẽ throw exception → trả 403
+            if (! $this->coQuyenHonNhan($login, $request->id_chong, $request->id_vo)) {
+                return response()->json(['status' => 0, 'message' => 'Bạn không có quyền thêm hôn nhân này. Ít nhất một bên phải thuộc nhánh bạn quản lý!'], 403);
             }
         }
 
         $honNhan = HonNhan::create($request->validated());
-        $honNhan->load(['chong', 'vo']);
+        $honNhan->load(['chong.nhanhHo', 'vo.nhanhHo']);
         $this->ghiLog($request, 'them', $honNhan, null, $honNhan->toArray());
 
         return response()->json(['status' => 1, 'message' => 'Thêm quan hệ hôn nhân thành công!', 'data' => $honNhan]);
@@ -74,31 +69,16 @@ class HonNhanController extends Controller
             return response()->json(['status' => 0, 'message' => 'Không tìm thấy quan hệ hôn nhân!'], 404);
         }
 
-        // Kiểm tra trưởng nhánh có quyền
+        // Trưởng nhánh: kiểm tra qua vợ hoặc chồng
         if ($login->vai_tro === 'truong_nhanh') {
-            $nhanhHoIds = [];
-            $chong = $honNhan->chong;
-            $vo = $honNhan->vo;
-            if ($chong && $chong->id_nhanh_ho) {
-                $nhanhHoIds[] = $chong->id_nhanh_ho;
-            }
-            if ($vo && $vo->id_nhanh_ho) {
-                $nhanhHoIds[] = $vo->id_nhanh_ho;
-            }
-            if ($honNhan->id_nhanh_ho) {
-                $nhanhHoIds[] = $honNhan->id_nhanh_ho;
-            }
-            $nhanhHoIds = array_unique($nhanhHoIds);
-            foreach ($nhanhHoIds as $nhanhHoId) {
-                if (! $login->nhanhHosQuanLy()->where('id', $nhanhHoId)->exists()) {
-                    return response()->json(['status' => 0, 'message' => 'Bạn không có quyền sửa hôn nhân trong nhánh này!'], 403);
-                }
+            if (! $this->coQuyenHonNhan($login, $honNhan->id_chong, $honNhan->id_vo)) {
+                return response()->json(['status' => 0, 'message' => 'Bạn không có quyền sửa hôn nhân này!'], 403);
             }
         }
 
         $old = $honNhan->toArray();
         $honNhan->update($request->validated());
-        $honNhan->load(['chong', 'vo']);
+        $honNhan->load(['chong.nhanhHo', 'vo.nhanhHo']);
         $this->ghiLog($request, 'sua', $honNhan, $old, $honNhan->fresh()->toArray());
 
         return response()->json(['status' => 1, 'message' => 'Cập nhật hôn nhân thành công!', 'data' => $honNhan]);
@@ -116,25 +96,10 @@ class HonNhanController extends Controller
             return response()->json(['status' => 0, 'message' => 'Không tìm thấy quan hệ hôn nhân!'], 404);
         }
 
-        // Kiểm tra trưởng nhánh có quyền
+        // Trưởng nhánh: kiểm tra qua vợ hoặc chồng
         if ($login->vai_tro === 'truong_nhanh') {
-            $nhanhHoIds = [];
-            $chong = $honNhan->chong;
-            $vo = $honNhan->vo;
-            if ($chong && $chong->id_nhanh_ho) {
-                $nhanhHoIds[] = $chong->id_nhanh_ho;
-            }
-            if ($vo && $vo->id_nhanh_ho) {
-                $nhanhHoIds[] = $vo->id_nhanh_ho;
-            }
-            if ($honNhan->id_nhanh_ho) {
-                $nhanhHoIds[] = $honNhan->id_nhanh_ho;
-            }
-            $nhanhHoIds = array_unique($nhanhHoIds);
-            foreach ($nhanhHoIds as $nhanhHoId) {
-                if (! $login->nhanhHosQuanLy()->where('id', $nhanhHoId)->exists()) {
-                    return response()->json(['status' => 0, 'message' => 'Bạn không có quyền xóa hôn nhân trong nhánh này!'], 403);
-                }
+            if (! $this->coQuyenHonNhan($login, $honNhan->id_chong, $honNhan->id_vo)) {
+                return response()->json(['status' => 0, 'message' => 'Bạn không có quyền xóa hôn nhân này!'], 403);
             }
         }
 
@@ -143,6 +108,31 @@ class HonNhanController extends Controller
         $this->ghiLog($request, 'xoa', $honNhan, $old, null);
 
         return response()->json(['status' => 1, 'message' => 'Xóa hôn nhân thành công!']);
+    }
+
+    /**
+     * Kiểm tra trưởng nhánh có quyền với hôn nhân không.
+     * Trưởng nhánh có quyền nếu ít nhất một bên (chồng hoặc vợ) thuộc nhánh mình.
+     */
+    private function coQuyenHonNhan($login, ?int $idChong, ?int $idVo): bool
+    {
+        $idsNhanh = $login->nhanhHosQuanLy()->pluck('id');
+
+        if ($idChong) {
+            $chong = ThanhVienGiaPha::find($idChong);
+            if ($chong && $chong->id_nhanh_ho && $idsNhanh->contains($chong->id_nhanh_ho)) {
+                return true;
+            }
+        }
+
+        if ($idVo) {
+            $vo = ThanhVienGiaPha::find($idVo);
+            if ($vo && $vo->id_nhanh_ho && $idsNhanh->contains($vo->id_nhanh_ho)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function ghiLog(Request $request, string $hanhDong, HonNhan $honNhan, ?array $cu, ?array $moi): void
