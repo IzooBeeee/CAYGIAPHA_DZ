@@ -1,0 +1,30 @@
+<?php
+
+namespace App\Http\Middleware;
+
+use App\Models\NguoiDung;
+use Closure;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Symfony\Component\HttpFoundation\Response;
+
+class ThanhVienMiddleware
+{
+    /**
+     * Handle an incoming request.
+     *
+     * @param  Closure(Request): (Response)  $next
+     */
+    public function handle(Request $request, Closure $next): Response
+    {
+        $user = Auth::guard('sanctum')->user();
+
+        if ($user && $user instanceof NguoiDung && in_array($user->vai_tro, ['thanh_vien', 'truong_nhanh', 'quan_tri_vien'], true) && $user->trang_thai === 'hoat_dong') {
+            return $next($request);
+        }
+
+        return response()->json([
+            'message' => 'Bạn cần đăng nhập để thực hiện chức năng này',
+        ], 401);
+    }
+}
